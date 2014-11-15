@@ -40,7 +40,7 @@ class ADB {
         continue;
       }
 
-      var split = line.split(" ");
+      var split = line.split("\t");
 
       var name = split[0];
 
@@ -82,12 +82,18 @@ class Device {
     return execute(["shell", command]..addAll(args));
   }
 
-  ProcessResult shellSync(String command, List<String> args) {
-    return executeSync(["shell", command]..addAll(args));
+  ProcessResult shellSync(String command, List<String> args, {bool raw: false}) {
+    return executeSync(["shell", command]..addAll(args), raw: raw);
   }
 
   void type(String text) {
-    shellSync("input", ["text", text]);
+    var words = text.split(" ");
+    for (int i = 0; i < words.length; i++) {
+      shellSync("input", ["text", words[i]]);
+      if (i < words.length) {
+        keyEvent(KeyCode.SPACE);
+      }
+    }
   }
 
   void tap(int x, int y) {
@@ -98,14 +104,14 @@ class Device {
     shellSync("input", ["swipe", ax.toString(), ay.toString(), bx.toString(), by.toString()]);
   }
 
-  void keyEvent(code_or_number, {bool longpress: false}) {
+  void keyEvent(int code, {bool longpress: false}) {
     var args = ["keyevent"];
 
     if (longpress) {
       args.add("--longpress");
     }
 
-    args.add(code_or_number.toString());
+    args.add(code.toString());
 
     shellSync("input", [args]);
   }
@@ -119,13 +125,64 @@ class Device {
     return Process.start("adb", args);
   }
 
-  ProcessResult executeSync(List<String> args) {
-    args.insertAll(0, ["-s", name]);
-    return Process.runSync("adb", args);
+  List<Package> listPackages() {
+    var packages = [];
+    String data = shellSync("pm", ["list", "packages", "-f"]).stdout.toString();
+    var lines = data.split("\n");
+    for (var line in lines) {
+      var split = line.split(":");
+      if (split.length != 2 || split[0] != "package") {
+        continue;
+      }
+
+      var parts = split[1].split("=");
+      var pkg = new Package(parts[1], parts[0]);
+      packages.add(pkg);
+    }
+
+    return packages;
+  }
+
+  Screenshot takeScreenshot() {
+    var result = shellSync("screencap", ["-p"], raw: true);
+    List<int> original = result.stdout;
+
+    var str = "\x0D\x0A"; // Bad Stuff
+    var replace = "\x0A";
+    var stuff = ASCII.decode(original);
+    var newStuff = stuff.replaceAll(str, replace);
+
+    return new Screenshot(newStuff.codeUnits);
+  }
+
+  ProcessResult executeSync(List<String> args, {bool raw: false}) {
+    var actual = ["-s", name];
+    for (var arg in args) {
+      actual.add(arg.toString());
+    }
+    return Process.runSync("adb", actual, stdoutEncoding: raw ? null : SYSTEM_ENCODING);
+  }
+}
+
+class Screenshot {
+  final List<int> data;
+
+  Screenshot(this.data);
+
+  void saveTo(File file) {
+    file.writeAsBytesSync(data);
   }
 }
 
 class KeyCode {
   static final int POWER = 26;
   static final int UNLOCK = 82;
+  static final int SPACE = 62;
+}
+
+class Package {
+  final String name;
+  final String path;
+
+  Package(this.name, this.path);
 }
